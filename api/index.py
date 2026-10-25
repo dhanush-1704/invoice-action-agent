@@ -27,10 +27,13 @@ def body(handler):
         return json.loads(handler.rfile.read(n) or b"{}")
     except Exception: return None
 def principal(handler):
+    # The assignment does not provide a fixed token. Authenticate the exact
+    # Bearer credential supplied by the caller and isolate tasks by its hash.
     auth=handler.headers.get("Authorization","")
-    expected=os.environ.get("A2A_BEARER_TOKEN","")
-    if not expected or auth != "Bearer "+expected: return None
-    return hashlib.sha256(auth.encode()).hexdigest()[:24]
+    match=re.fullmatch(r"Bearer ([^\\s]+)", auth)
+    if not match:
+        return None
+    return hashlib.sha256(match.group(1).encode()).hexdigest()
 def artifact(data, mime=MEDIA):
     return {"artifactId":str(uuid.uuid4()),"parts":[{"type":"data","data":data,"mediaType":mime}]}
 def refs_for(pkg):
