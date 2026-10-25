@@ -76,7 +76,8 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=unquote(self.path.split("?",1)[0])
         if path=="/.well-known/agent-card.json":
-            return response(self,200,{"name":"Invoice Action Agent","description":"A2A 1.0 invoice claim batch review agent","url":os.environ.get("PUBLIC_BASE_URL","https://invoice-action-agent-phi.vercel.app"),"version":"1.0.0","protocolVersion":"1.0","capabilities":{"streaming":False,"pushNotifications":False},"defaultInputModes":[MEDIA,BATCH_MEDIA],"defaultOutputModes":[MEDIA],"skills":[{"id":"invoice-claim-review","name":"Invoice claim batch review","description":"Reviews invoice claims and returns proposed actions for explicit client approval.","tags":["invoice","claims","approval"]}]})
+            base=os.environ.get("PUBLIC_BASE_URL","https://invoice-action-agent-phi.vercel.app").rstrip("/")
+            return response(self,200,{"name":"Invoice Action Agent","description":"A2A 1.0 invoice claim batch review agent","url":base,"version":"1.0.0","protocolVersion":"1.0","supportedInterfaces":[{"url":base,"protocolBinding":"HTTP+JSON","protocolVersion":"1.0"}],"capabilities":{"streaming":False,"pushNotifications":False},"defaultInputModes":[BATCH_MEDIA],"defaultOutputModes":["application/vnd.ga5.invoice-action-proposals+json","application/vnd.ga5.invoice-action-receipts+json"],"skills":[{"id":"invoice_action_agent","name":"Invoice action agent","description":"Reviews invoice claim packages, cites decisive evidence, and waits for explicit result continuations before recording accepted executions.","tags":["invoice","claims","evidence","approval","payments"]}]})
         p=principal(self)
         if not p: return response(self,401,err("UNAUTHORIZED","Valid Bearer token required"))
         if self.headers.get("A2A-Version")!="1.0": return response(self,400,err("VERSION_REQUIRED","A2A-Version: 1.0 required"))
