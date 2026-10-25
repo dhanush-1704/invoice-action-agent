@@ -67,8 +67,10 @@ def propose(pkg, batch_id, revision):
       "facts":facts or {k:v for k,v in pkg.items() if k not in ("evidence","evidenceRefs")},
       "evidenceRefs":refs,"rationale":rationale}
 def get_message_data(msg):
+    # A2A HTTP+JSON parts carry mediaType and data; a "type":"data" field
+    # is not required by the assignment's wire format.
     for p in msg.get("parts",[]):
-        if isinstance(p,dict) and p.get("type")=="data":
+        if isinstance(p,dict) and "data" in p and isinstance(p.get("mediaType"),str):
             return p.get("data"), p.get("mediaType")
     return None,None
 
