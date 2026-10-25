@@ -138,8 +138,10 @@ class handler(BaseHTTPRequestHandler):
             if t:
                 dat,mt=get_message_data(msg)
                 if mt not in ("application/vnd.ga5.invoice-action-results+json", "application/vnd.ga5.invoice-action-result+json") or not isinstance(dat,dict): return response(self,400,err("INVALID_CONTINUATION","Continuation must contain a supported A2A data part"))
-                if t["status"]!="TASK_STATE_INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))\n                if not isinstance(dat.get("batchId"),str) or not dat.get("batchId"): return response(self,400,err("INVALID_RESULTS","batchId is required in the continuation results part"))
-                continuation_context=dat.get("contextId") or msg.get("contextId")\n                if continuation_context!=t["contextId"] or dat.get("batchId")!=t["batchId"]: return response(self,409,err("CONTEXT_MISMATCH","Continuation context or batch does not match"))
+                if t["status"]!="TASK_STATE_INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))
+                if not isinstance(dat.get("batchId"),str) or not dat.get("batchId"): return response(self,400,err("INVALID_RESULTS","batchId is required in the continuation results part"))
+                continuation_context=dat.get("contextId") or msg.get("contextId")
+                if continuation_context!=t["contextId"] or dat.get("batchId")!=t["batchId"]: return response(self,409,err("CONTEXT_MISMATCH","Continuation context or batch does not match"))
                 outcomes=dat.get("results",dat.get("outcomes",[]))
                 if not isinstance(outcomes,list): return response(self,400,err("INVALID_RESULTS","results must be an array"))
                 executions=[]
