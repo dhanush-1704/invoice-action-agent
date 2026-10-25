@@ -17,7 +17,7 @@ def canonical(x): return json.dumps(x, sort_keys=True, separators=(",",":"), ens
 def err(code, message): return {"error":{"code":code,"message":message}}
 def task_view(t):
     return {k:t[k] for k in ("id","contextId","status","history","artifacts","createdAt","updatedAt") if k in t}
-def response(handler, status, obj, content_type="application/json"):
+def response(handler, status, obj, content_type=MEDIA):
     raw=json.dumps(obj,ensure_ascii=False).encode()
     handler.send_response(status); handler.send_header("Content-Type",content_type); handler.send_header("Content-Length",str(len(raw))); handler.end_headers(); handler.wfile.write(raw)
 def body(handler):
