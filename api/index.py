@@ -34,6 +34,10 @@ def principal(handler):
     if not match:
         return None
     return hashlib.sha256(match.group(1).encode()).hexdigest()
+PROPOSALS_MEDIA = "application/vnd.ga5.invoice-action-proposals+json"
+RECEIPTS_MEDIA = "application/vnd.ga5.invoice-action-receipts+json"
+
+
 def artifact(data, mime=MEDIA):
     return {"artifactId":str(uuid.uuid4()),"parts":[{"type":"data","data":data,"mediaType":mime}]}
 def refs_for(pkg):
@@ -107,8 +111,8 @@ class handler(BaseHTTPRequestHandler):
             with LOCK:
                 t=TASKS.get(tid)
                 if not t or t["principal"]!=p: return response(self,404,err("TASK_NOT_FOUND","Task not found"))
-                if t["status"] in ("COMPLETED","CANCELED","FAILED"): return response(self,409,err("TERMINAL_TASK","Terminal tasks cannot be changed"))
-                t["status"]="CANCELED"; t["updatedAt"]=now()
+                if t["status"] in ("TASK_STATE_COMPLETED","TASK_STATE_CANCELED","TASK_STATE_FAILED"): return response(self,409,err("TERMINAL_TASK","Terminal tasks cannot be changed"))
+                t["status"]="TASK_STATE_CANCELED"; t["updatedAt"]=now()
                 t["history"].append({"role":"user","parts":[{"type":"text","text":"Task cancellation requested"}]})
                 return response(self,200,task_view(t))
         if path!="/message:send": return response(self,404,err("NOT_FOUND","Unknown endpoint"))
@@ -128,7 +132,7 @@ class handler(BaseHTTPRequestHandler):
             if t:
                 dat,mt=get_message_data(msg)
                 if not isinstance(dat,dict): return response(self,400,err("INVALID_CONTINUATION","Continuation must contain a data part"))
-                if t["status"]!="INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))
+                if t["status"]!="TASK_STATE_INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))
                 if dat.get("contextId")!=t["contextId"] or dat.get("batchId")!=t["batchId"]: return response(self,409,err("CONTEXT_MISMATCH","Continuation context or batch does not match"))
                 outcomes=dat.get("results",dat.get("outcomes",[]))
                 if not isinstance(outcomes,list): return response(self,400,err("INVALID_RESULTS","results must be an array"))
@@ -138,12 +142,12 @@ class handler(BaseHTTPRequestHandler):
                     if not isinstance(outcome,dict): return response(self,400,err("INVALID_RESULT","Each result must be an object"))
                     proposal=next((x for x in proposals if x["packageId"]==outcome.get("packageId") and x["actionId"]==outcome.get("actionId")),None)
                     if not proposal or outcome.get("action")!=proposal["action"]: return response(self,409,err("PROPOSAL_MISMATCH","Result does not match a proposed package/action"))
-                    if outcome.get("accepted") is True:
+                    if outcome.get("outcome")=="ACCEPTED":
                         nonce=outcome.get("receiptNonce")
                         if not isinstance(nonce,str) or not nonce: return response(self,400,err("RECEIPT_NONCE_REQUIRED","Accepted outcomes require receiptNonce"))
-                        executions.append({"packageId":proposal["packageId"],"actionId":proposal["actionId"],"action":proposal["action"],"receiptNonce":nonce})
-                t["history"].append(msg); t["artifacts"].append(artifact({"contextId":t["contextId"],"batchId":t["batchId"],"executions":executions}))
-                t["status"]="COMPLETED"; t["updatedAt"]=now(); IDEMPOTENCY[key]=(digest,t["id"])
+                        executions.append({"packageId":proposal["packageId"],"actionId":proposal["actionId"],"action":proposal["action"],"receiptNonce":nonce,"facts":proposal["facts"],"evidenceRefs":proposal["evidenceRefs"]})
+                t["history"].append(msg); t["artifacts"].append(artifact({"batchId":t["batchId"],"executions":executions},RECEIPTS_MEDIA))
+                t["status"]="TASK_STATE_COMPLETED"; t["updatedAt"]=now(); IDEMPOTENCY[key]=(digest,t["id"])
                 return response(self,200,{"task":task_view(t)})
             dat,mt=get_message_data(msg)
             if mt!=BATCH_MEDIA or not isinstance(dat,dict): return response(self,400,err("INVALID_BATCH","A data part with the invoice-claim batch media type is required"))
@@ -153,7 +157,7 @@ class handler(BaseHTTPRequestHandler):
             if not bid or rev is None: return response(self,400,err("INVALID_BATCH","batchId and policyRevision are required"))
             proposals=[propose(pkg,bid,rev) for pkg in packages if isinstance(pkg,dict)]
             tid=str(uuid.uuid4()); context=msg.get("contextId") or str(uuid.uuid4())
-            t={"id":tid,"contextId":context,"principal":p,"status":"INPUT_REQUIRED","batchId":bid,"policyRevision":rev,"proposals":proposals,"history":[msg],"artifacts":[artifact({"contextId":context,"batchId":bid,"policyRevision":rev,"proposals":proposals})],"createdAt":now(),"updatedAt":now()}
+            t={"id":tid,"contextId":context,"principal":p,"status":"TASK_STATE_INPUT_REQUIRED","batchId":bid,"policyRevision":rev,"proposals":proposals,"history":[msg],"artifacts":[artifact({"batchId":bid,"proposals":proposals},PROPOSALS_MEDIA)],"createdAt":now(),"updatedAt":now()}
             TASKS[tid]=t; IDEMPOTENCY[key]=(digest,tid)
             return response(self,200,{"task":task_view(t)})
     def log_message(self,*args): pass
