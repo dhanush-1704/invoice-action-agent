@@ -41,15 +41,16 @@ RECEIPTS_MEDIA = "application/vnd.ga5.invoice-action-receipts+json"
 def artifact(data, mime=MEDIA):
     return {"artifactId":str(uuid.uuid4()),"parts":[{"type":"data","data":data,"mediaType":mime}]}
 def refs_for(pkg):
-    refs=pkg.get("evidenceRefs") or pkg.get("evidence") or []
+    refs=pkg.get("evidenceRefs") or pkg.get("evidenceRefsUsed") or []
     if isinstance(refs,dict): refs=list(refs.keys())
     out=[]
     for r in refs:
-        if isinstance(r,str): out.append(r)
+        if isinstance(r,str) and r.strip(): out.append(r.strip())
         elif isinstance(r,dict):
             v=r.get("ref") or r.get("id") or r.get("evidenceRef")
-            if v: out.append(v)
-    return out
+            if isinstance(v,str) and v.strip(): out.append(v.strip())
+    # Never fabricate citations. The caller must provide real references.
+    return list(dict.fromkeys(out))
 def propose(pkg, batch_id, revision):
     facts=pkg.get("facts",{}) if isinstance(pkg.get("facts",{}),dict) else {}
     duplicate=bool(pkg.get("duplicate") or facts.get("duplicate") or pkg.get("duplicateOf"))
@@ -58,18 +59,19 @@ def propose(pkg, batch_id, revision):
     if duplicate: action="reject_duplicate"
     elif missing: action="open_exception"
     elif mismatch: action="hold_invoice"
-    elif pkg.get("amount") and pkg.get("approvalRequired"): action="request_approval"
-    elif pkg.get("settlementEligible", True): action="settle_invoice"
+    elif (pkg.get("amountMinor") or facts.get("amountMinor") or pkg.get("amount")) and (pkg.get("approvalRequired") or facts.get("approvalRequired")): action="request_approval"
+    elif pkg.get("settlementEligible", facts.get("settlementEligible", True)): action="settle_invoice"
     else: action="hold_invoice"
-    refs=refs_for(pkg)
-    while len(refs)<3: refs.append(f"[batch:{batch_id}:package:{pkg.get('packageId','unknown')}:policy:{revision}:evidence-{len(refs)+1}]")
-    refs=refs[:3]
+    refs=refs_for(pkg)[:3]
+    source={**pkg, **facts}
+    proposal_facts={k:source.get(k) for k in ("vendorName","invoiceNumber","amountMinor","currency") if source.get(k) is not None}
     rationale=(f"Proposed action {action} for package {pkg.get('packageId','unknown')} under policy revision {revision}. "
-      f"The available package facts indicate duplicate={duplicate}, missingFields={bool(missing)}, mismatch={bool(mismatch)}. "
-      f"Decision is grounded in {refs[0]}, {refs[1]}, and {refs[2]}; verify these records before any financial side effect.")
+      f"The package indicators are duplicate={duplicate}, missingFields={bool(missing)}, mismatch={bool(mismatch)}. "
+      f"Evidence references supplied with this package: {', '.join(refs) if refs else 'none supplied'}. "
+      "Verify the cited source records before any financial side effect.")
     return {"packageId":pkg.get("packageId"),"actionId":str(uuid.uuid4()),"action":action,
-      "facts":facts or {k:v for k,v in pkg.items() if k not in ("evidence","evidenceRefs")},
-      "evidenceRefs":refs,"rationale":rationale}
+      "facts":proposal_facts,"evidenceRefs":refs,"rationale":rationale}
+
 def get_message_data(msg):
     # A2A HTTP+JSON parts carry mediaType and data; a "type":"data" field
     # is not required by the assignment's wire format.
