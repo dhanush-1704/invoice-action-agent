@@ -89,7 +89,7 @@ class handler(BaseHTTPRequestHandler):
         path=unquote(self.path.split("?",1)[0])
         if path=="/.well-known/agent-card.json":
             base=os.environ.get("PUBLIC_BASE_URL","https://invoice-action-agent-phi.vercel.app").rstrip("/")
-            return response(self,200,{"name":"Invoice Action Agent","description":"A2A 1.0 invoice claim batch review agent","url":base,"version":"1.0.0","protocolVersion":"1.0","supportedInterfaces":[{"url":base,"protocolBinding":"HTTP+JSON","protocolVersion":"1.0"}],"capabilities":{"streaming":False,"pushNotifications":False},"defaultInputModes":[BATCH_MEDIA],"defaultOutputModes":["application/vnd.ga5.invoice-action-proposals+json","application/vnd.ga5.invoice-action-receipts+json"],"skills":[{"id":"invoice_action_agent","name":"Invoice action agent","description":"Reviews invoice claim packages, cites decisive evidence, and waits for explicit result continuations before recording accepted executions.","tags":["invoice","claims","evidence","approval","payments"]}]})
+            return response(self,200,{"name":"Invoice Action Agent","description":"A2A 1.0 invoice claim batch review agent","url":base,"version":"1.0.0","protocolVersion":"1.0","supportedInterfaces":[{"url":base,"protocolBinding":"HTTP+JSON","protocolVersion":"1.0"}],"capabilities":{"streaming":False,"pushNotifications":False},"defaultInputModes":[BATCH_MEDIA],"defaultOutputModes":["application/vnd.ga5.invoice-action-proposals+json","application/vnd.ga5.invoice-action-receipts+json"],"skills":[{"id":"invoice_action_agent","name":"Invoice action agent","description":"Reviews invoice claim packages, cites decisive evidence, and waits for explicit result continuations before recording accepted executions.","tags":["invoice","claims","evidence","approval","payments"],"inputModes":[BATCH_MEDIA],"outputModes":[PROPOSALS_MEDIA,RECEIPTS_MEDIA]}]})
         p=principal(self)
         if not p: return response(self,401,err("UNAUTHORIZED","Valid Bearer token required"))
         if self.headers.get("A2A-Version")!="1.0": return response(self,400,err("VERSION_REQUIRED","A2A-Version: 1.0 required"))
@@ -131,15 +131,15 @@ class handler(BaseHTTPRequestHandler):
                 if old_hash!=digest: return response(self,409,err("IDEMPOTENCY_CONFLICT","messageId was already used with different message content"))
                 return response(self,200,{"task":task_view(TASKS[tid])})
             t=None
-            task_id=data.get("taskId") or data.get("id")
+            task_id=data.get("taskId") or data.get("id") or msg.get("taskId") or msg.get("id")
             if task_id:
                 t=TASKS.get(str(task_id))
                 if not t or t["principal"]!=p: return response(self,404,err("TASK_NOT_FOUND","Task not found"))
             if t:
                 dat,mt=get_message_data(msg)
-                if mt not in (BATCH_MEDIA, "application/vnd.ga5.invoice-action-results+json", "application/vnd.ga5.invoice-action-result+json") or not isinstance(dat,dict): return response(self,400,err("INVALID_CONTINUATION","Continuation must contain a supported A2A data part"))
-                if t["status"]!="TASK_STATE_INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))
-                if dat.get("contextId")!=t["contextId"] or dat.get("batchId")!=t["batchId"]: return response(self,409,err("CONTEXT_MISMATCH","Continuation context or batch does not match"))
+                if mt not in ("application/vnd.ga5.invoice-action-results+json", "application/vnd.ga5.invoice-action-result+json") or not isinstance(dat,dict): return response(self,400,err("INVALID_CONTINUATION","Continuation must contain a supported A2A data part"))
+                if t["status"]!="TASK_STATE_INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))\n                if not isinstance(dat.get("batchId"),str) or not dat.get("batchId"): return response(self,400,err("INVALID_RESULTS","batchId is required in the continuation results part"))
+                continuation_context=dat.get("contextId") or msg.get("contextId")\n                if continuation_context!=t["contextId"] or dat.get("batchId")!=t["batchId"]: return response(self,409,err("CONTEXT_MISMATCH","Continuation context or batch does not match"))
                 outcomes=dat.get("results",dat.get("outcomes",[]))
                 if not isinstance(outcomes,list): return response(self,400,err("INVALID_RESULTS","results must be an array"))
                 executions=[]
