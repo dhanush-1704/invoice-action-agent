@@ -73,7 +73,7 @@ class handler(BaseHTTPRequestHandler):
     def do_GET(self):
         path=unquote(self.path.split("?",1)[0])
         if path=="/.well-known/agent-card.json":
-            return response(self,200,{"name":"Invoice Action Agent","description":"A2A 1.0 invoice claim batch review agent","url":os.environ.get("PUBLIC_BASE_URL",""),"version":"1.0.0","protocolVersion":"1.0","capabilities":{"streaming":False,"pushNotifications":False},"defaultInputModes":[MEDIA,BATCH_MEDIA],"defaultOutputModes":[MEDIA],"skills":[{"id":"invoice-claim-review","name":"Invoice claim batch review","description":"Reviews invoice claims and returns proposed actions for explicit client approval.","tags":["invoice","claims","approval"]}]})
+            return response(self,200,{"name":"Invoice Action Agent","description":"A2A 1.0 invoice claim batch review agent","url":os.environ.get("PUBLIC_BASE_URL","https://invoice-action-agent-phi.vercel.app"),"version":"1.0.0","protocolVersion":"1.0","capabilities":{"streaming":False,"pushNotifications":False},"defaultInputModes":[MEDIA,BATCH_MEDIA],"defaultOutputModes":[MEDIA],"skills":[{"id":"invoice-claim-review","name":"Invoice claim batch review","description":"Reviews invoice claims and returns proposed actions for explicit client approval.","tags":["invoice","claims","approval"]}]})
         p=principal(self)
         if not p: return response(self,401,err("UNAUTHORIZED","Valid Bearer token required"))
         if self.headers.get("A2A-Version")!="1.0": return response(self,400,err("VERSION_REQUIRED","A2A-Version: 1.0 required"))
