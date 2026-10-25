@@ -52,9 +52,9 @@ def determining_text(pkg):
                 key = re.sub(r"[^a-z]", "", str(k).lower())
                 p = f"{path}/{key}"
                 if isinstance(v, str):
-                    if any(x in key for x in ("cover", "archive", "training", "decoy", "example")):
+                    if any(x in key or x in path for x in ("cover", "archive", "training", "decoy", "example")):
                         continue
-                    score = 100 if key in preferred else (50 if ("paragraph" in key and any(x in key for x in ("decision", "determin", "control", "action"))) or ("paragraph" in path and key in ("text", "content", "body")) else 0)
+                    score = 100 if key in preferred else (50 if ("paragraph" in key and any(x in key for x in ("decision", "determin", "control", "action"))) or (any(x in path for x in ("paragraph", "evidence", "decision")) and key in ("text", "content", "body", "paragraph")) else 0)
                     if score:
                         found.append((score, v))
                 else:
