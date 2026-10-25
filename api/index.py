@@ -40,41 +40,88 @@ RECEIPTS_MEDIA = "application/vnd.ga5.invoice-action-receipts+json"
 
 def artifact(data, mime=MEDIA):
     return {"artifactId":str(uuid.uuid4()),"parts":[{"type":"data","data":data,"mediaType":mime}]}
+def determining_text(pkg):
+    # Prefer explicitly marked decision-bearing paragraphs. Never cite cover,
+    # archive, training, or decoy material as controlling evidence.
+    preferred = ("determiningparagraph", "decisionparagraph", "controllingparagraph",
+                 "actiondeterminingparagraph", "policyanalysis", "decisionbasis")
+    found = []
+    def walk(obj, path=""):
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                key = re.sub(r"[^a-z]", "", str(k).lower())
+                p = f"{path}/{key}"
+                if isinstance(v, str):
+                    if any(x in key for x in ("cover", "archive", "training", "decoy", "example")):
+                        continue
+                    score = 100 if key in preferred else (50 if "paragraph" in key and any(x in key for x in ("decision", "determin", "control", "action")) else 0)
+                    if score:
+                        found.append((score, v))
+                else:
+                    walk(v, p)
+        elif isinstance(obj, list):
+            for v in obj: walk(v, path)
+    walk(pkg)
+    if found:
+        found.sort(key=lambda x: x[0], reverse=True)
+        return found[0][1]
+    # Common case schemas put the actual narrative in one of these fields.
+    for k in ("determiningParagraph", "decisionParagraph", "controllingParagraph",
+              "actionDeterminingParagraph", "caseText", "narrative", "description", "text"):
+        v = pkg.get(k)
+        if isinstance(v, str) and v.strip():
+            return v
+    return ""
+
 def refs_for(pkg):
-    refs=pkg.get("evidenceRefs") or pkg.get("evidenceRefsUsed") or []
-    if isinstance(refs,dict): refs=list(refs.keys())
-    out=[]
-    for item in refs:
-        if isinstance(item,str) and item.strip(): out.append(item.strip())
-        elif isinstance(item,dict):
-            v=item.get("ref") or item.get("id") or item.get("evidenceRef")
-            if isinstance(v,str) and v.strip(): out.append(v.strip())
-    # Extract literal bracketed references already present in package text; never synthesize citations.
-    if not out:
-        raw=json.dumps(pkg,ensure_ascii=False,sort_keys=True)
-        out=re.findall(r"\[[A-Za-z][A-Za-z0-9_.:/ -]{1,100}\]",raw)
-    return list(dict.fromkeys(out))
+    paragraph = determining_text(pkg)
+    refs = re.findall(r"\\[[A-Za-z][A-Za-z0-9_.:/-]{1,100}\\]", paragraph)
+    # Preserve the exact literal reference IDs and their order. Do not fall back
+    # to arbitrary package-level refs, which can include cover/archive decoys.
+    return list(dict.fromkeys(refs))[:3]
 
 def propose(pkg, batch_id, revision):
-    facts=pkg.get("facts",{}) if isinstance(pkg.get("facts",{}),dict) else {}
-    duplicate=bool(pkg.get("duplicate") or facts.get("duplicate") or pkg.get("duplicateOf"))
-    missing=bool(pkg.get("missingFields") or facts.get("missingFields"))
-    mismatch=bool(pkg.get("mismatch") or facts.get("mismatch"))
-    if duplicate: action="reject_duplicate"
-    elif missing: action="open_exception"
-    elif mismatch: action="hold_invoice"
-    elif (pkg.get("amountMinor") or facts.get("amountMinor") or pkg.get("amount")) and (pkg.get("approvalRequired") or facts.get("approvalRequired")): action="request_approval"
-    elif pkg.get("settlementEligible", facts.get("settlementEligible", True)): action="settle_invoice"
-    else: action="hold_invoice"
-    refs=refs_for(pkg)[:3]
-    source={**pkg, **facts}
-    proposal_facts={k:source.get(k) for k in ("vendorName","invoiceNumber","amountMinor","currency") if source.get(k) is not None}
-    rationale=(f"Proposed action {action} for package {pkg.get('packageId','unknown')} under policy revision {revision}. "
-      f"The package indicators are duplicate={duplicate}, missingFields={bool(missing)}, mismatch={bool(mismatch)}. "
-      f"Evidence references supplied with this package: {', '.join(refs) if refs else 'none supplied'}. "
-      "Verify the cited source records before any financial side effect.")
-    return {"packageId":pkg.get("packageId"),"actionId":str(uuid.uuid4()),"action":action,
-      "facts":proposal_facts,"evidenceRefs":refs,"rationale":rationale}
+    facts = pkg.get("facts", {}) if isinstance(pkg.get("facts", {}), dict) else {}
+    source = {**pkg, **facts}
+    paragraph = determining_text(pkg)
+    narrative = paragraph.lower()
+    def flag(*names):
+        return any(bool(source.get(n)) for n in names)
+    duplicate_paid = flag("sameCommercialInvoiceAlreadyPaid", "duplicatePaid", "duplicateAlreadyPaid", "alreadyPaidDuplicate")
+    material_conflict = flag("materialRecordConflict", "recordConflict", "materialConflict")
+    pending_verification = flag("pendingVerification", "verificationPending", "unverified", "holdRequired")
+    valid = flag("validInvoice", "invoiceValid", "valid")
+    reconciled = flag("reconciled", "reconciliationPassed", "matched")
+    within_authority = flag("withinAutonomousAuthority", "withinDelegatedAuthority", "withinAuthority", "withinLimit")
+    outside_authority = flag("outsideDelegatedAuthority", "approvalRequired", "requiresApproval", "outsideAuthority")
+    # Derive only from explicit case facts / controlling prose, never default
+    # every ordinary-looking package to settlement.
+    if duplicate_paid or ("same commercial invoice" in narrative and ("already paid" in narrative or "payment completed" in narrative)):
+        action = "reject_duplicate"
+    elif material_conflict or ("material conflict" in narrative) or ("conflicting records" in narrative):
+        action = "open_exception"
+    elif pending_verification or ("pending verification" in narrative) or ("awaiting verification" in narrative) or ("unverified" in narrative):
+        action = "hold_invoice"
+    elif outside_authority or ("outside delegated authority" in narrative) or ("approval required" in narrative) or ("requires approval" in narrative):
+        action = "request_approval"
+    elif valid and reconciled and within_authority and not any(x in narrative for x in ("unverified", "conflict", "approval required")):
+        action = "settle_invoice"
+    elif (("valid" in narrative or "invoice valid" in narrative) and
+          ("reconciled" in narrative or "matched to purchase order" in narrative) and
+          ("within authority" in narrative or "within delegated authority" in narrative) and
+          not any(x in narrative for x in ("pending verification", "unverified", "conflict", "approval required"))):
+        action = "settle_invoice"
+    elif not paragraph and flag("settlementEligible") and flag("reconciled") and flag("withinAuthority"):
+        action = "settle_invoice"
+    else:
+        action = "open_exception" if material_conflict else "hold_invoice"
+    refs = refs_for(pkg)
+    proposal_facts = {k: source.get(k) for k in ("vendorName", "invoiceNumber", "amountMinor", "currency") if source.get(k) is not None}
+    rationale = (f"Proposed action {action} for package {pkg.get('packageId', 'unknown')} under policy revision {revision}. "
+        f"Decision basis: {paragraph[:700] if paragraph else 'The supplied structured case facts do not establish all conditions required for autonomous settlement; no settlement is authorized.'} "
+        f"Evidence references: {', '.join(refs)}. The cited decision-bearing evidence must support the action; no execution occurs unless a matching continuation explicitly returns ACCEPTED.")
+    return {"packageId": pkg.get("packageId"), "actionId": str(uuid.uuid4()), "action": action,
+        "facts": proposal_facts, "evidenceRefs": refs, "rationale": rationale}
 
 def get_message_data(msg):
     # A2A HTTP+JSON parts carry mediaType and data; a "type":"data" field
