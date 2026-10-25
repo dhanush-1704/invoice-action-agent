@@ -54,7 +54,7 @@ def determining_text(pkg):
                 if isinstance(v, str):
                     if any(x in key for x in ("cover", "archive", "training", "decoy", "example")):
                         continue
-                    score = 100 if key in preferred else (50 if "paragraph" in key and any(x in key for x in ("decision", "determin", "control", "action")) else 0)
+                    score = 100 if key in preferred else (50 if ("paragraph" in key and any(x in key for x in ("decision", "determin", "control", "action"))) or ("paragraph" in path and key in ("text", "content", "body")) else 0)
                     if score:
                         found.append((score, v))
                 else:
@@ -75,7 +75,7 @@ def determining_text(pkg):
 
 def refs_for(pkg):
     paragraph = determining_text(pkg)
-    refs = re.findall(r"\\[[A-Za-z][A-Za-z0-9_.:/-]{1,100}\\]", paragraph)
+    refs = re.findall(r"\[[A-Za-z][A-Za-z0-9_.:/-]{1,100}\]", paragraph)
     # Preserve the exact literal reference IDs and their order. Do not fall back
     # to arbitrary package-level refs, which can include cover/archive decoys.
     return list(dict.fromkeys(refs))[:3]
