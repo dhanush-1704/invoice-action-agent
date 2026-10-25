@@ -44,13 +44,17 @@ def refs_for(pkg):
     refs=pkg.get("evidenceRefs") or pkg.get("evidenceRefsUsed") or []
     if isinstance(refs,dict): refs=list(refs.keys())
     out=[]
-    for r in refs:
-        if isinstance(r,str) and r.strip(): out.append(r.strip())
-        elif isinstance(r,dict):
-            v=r.get("ref") or r.get("id") or r.get("evidenceRef")
+    for item in refs:
+        if isinstance(item,str) and item.strip(): out.append(item.strip())
+        elif isinstance(item,dict):
+            v=item.get("ref") or item.get("id") or item.get("evidenceRef")
             if isinstance(v,str) and v.strip(): out.append(v.strip())
-    # Never fabricate citations. The caller must provide real references.
+    # Extract literal bracketed references already present in package text; never synthesize citations.
+    if not out:
+        raw=json.dumps(pkg,ensure_ascii=False,sort_keys=True)
+        out=re.findall(r"\[[A-Za-z][A-Za-z0-9_.:/ -]{1,100}\]",raw)
     return list(dict.fromkeys(out))
+
 def propose(pkg, batch_id, revision):
     facts=pkg.get("facts",{}) if isinstance(pkg.get("facts",{}),dict) else {}
     duplicate=bool(pkg.get("duplicate") or facts.get("duplicate") or pkg.get("duplicateOf"))
@@ -133,7 +137,7 @@ class handler(BaseHTTPRequestHandler):
                 if not t or t["principal"]!=p: return response(self,404,err("TASK_NOT_FOUND","Task not found"))
             if t:
                 dat,mt=get_message_data(msg)
-                if not isinstance(dat,dict): return response(self,400,err("INVALID_CONTINUATION","Continuation must contain a data part"))
+                if mt not in (BATCH_MEDIA, "application/vnd.ga5.invoice-action-results+json", "application/vnd.ga5.invoice-action-result+json") or not isinstance(dat,dict): return response(self,400,err("INVALID_CONTINUATION","Continuation must contain a supported A2A data part"))
                 if t["status"]!="TASK_STATE_INPUT_REQUIRED": return response(self,409,err("TASK_NOT_AWAITING_INPUT","Task is not awaiting input"))
                 if dat.get("contextId")!=t["contextId"] or dat.get("batchId")!=t["batchId"]: return response(self,409,err("CONTEXT_MISMATCH","Continuation context or batch does not match"))
                 outcomes=dat.get("results",dat.get("outcomes",[]))
@@ -144,6 +148,8 @@ class handler(BaseHTTPRequestHandler):
                     if not isinstance(outcome,dict): return response(self,400,err("INVALID_RESULT","Each result must be an object"))
                     proposal=next((x for x in proposals if x["packageId"]==outcome.get("packageId") and x["actionId"]==outcome.get("actionId")),None)
                     if not proposal or outcome.get("action")!=proposal["action"]: return response(self,409,err("PROPOSAL_MISMATCH","Result does not match a proposed package/action"))
+                    if outcome.get("outcome") not in ("ACCEPTED","REJECTED"):
+                        return response(self,400,err("INVALID_OUTCOME","outcome must be ACCEPTED or REJECTED"))
                     if outcome.get("outcome")=="ACCEPTED":
                         nonce=outcome.get("receiptNonce")
                         if not isinstance(nonce,str) or not nonce: return response(self,400,err("RECEIPT_NONCE_REQUIRED","Accepted outcomes require receiptNonce"))
@@ -154,10 +160,10 @@ class handler(BaseHTTPRequestHandler):
             dat,mt=get_message_data(msg)
             if mt!=BATCH_MEDIA or not isinstance(dat,dict): return response(self,400,err("INVALID_BATCH","A data part with the invoice-claim batch media type is required"))
             packages=dat.get("packages")
-            if not isinstance(packages,list) or not packages: return response(self,400,err("INVALID_BATCH","packages must be a non-empty array"))
+            if not isinstance(packages,list) or not packages or any(not isinstance(pkg,dict) for pkg in packages): return response(self,400,err("INVALID_BATCH","packages must be a non-empty array of objects"))
             bid=dat.get("batchId"); rev=dat.get("policyRevision")
             if not bid or rev is None: return response(self,400,err("INVALID_BATCH","batchId and policyRevision are required"))
-            proposals=[propose(pkg,bid,rev) for pkg in packages if isinstance(pkg,dict)]
+            proposals=[propose(pkg,bid,rev) for pkg in packages]
             tid=str(uuid.uuid4()); context=msg.get("contextId") or str(uuid.uuid4())
             t={"id":tid,"contextId":context,"principal":p,"status":"TASK_STATE_INPUT_REQUIRED","batchId":bid,"policyRevision":rev,"proposals":proposals,"history":[msg],"artifacts":[artifact({"batchId":bid,"proposals":proposals},PROPOSALS_MEDIA)],"createdAt":now(),"updatedAt":now()}
             TASKS[tid]=t; IDEMPOTENCY[key]=(digest,tid)
