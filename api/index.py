@@ -30,7 +30,7 @@ def principal(handler):
     # The assignment does not provide a fixed token. Authenticate the exact
     # Bearer credential supplied by the caller and isolate tasks by its hash.
     auth=handler.headers.get("Authorization","")
-    match=re.fullmatch(r"Bearer (\\S+)", auth)
+    match=re.fullmatch(r"Bearer (\S+)", auth)
     if not match:
         return None
     return hashlib.sha256(match.group(1).encode()).hexdigest()
